@@ -16,7 +16,7 @@ AI Development: Pytorch (Torch, Cuda), OpenAI Gym, WandB
 
 ## Evaluation and Inference
 
-More Figures available on WandB: https://wandb.ai/arth-shukla/PPO%20Gym%20Cart%20Pole
+More episode videos available on WandB: https://wandb.ai/arth-shukla/PPO%20Gym%20Cart%20Pole
 
 The PPO Model currently only supports discrete action spaces (categorical distribution). In OpenAI Gym Cartpole, by episode 136, the agent is able to effectively "beat" cartpole:
 
