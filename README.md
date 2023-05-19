@@ -20,9 +20,12 @@ More Figures available on WandB: https://wandb.ai/arth-shukla/PPO%20Gym%20Cart%2
 
 The PPO Model currently only supports discrete action spaces (categorical distribution). In OpenAI Gym Cartpole, by episode 136, the agent is able to effectively "beat" cartpole:
 
-<video style="width:100%" controls>
-  <source src="./videos/gym_carpole_ppo_ep_136.mp4" type="video/mp4">
-</video>
+<figure>
+  <figcaption><h3>Episode 136 Video</h3></figcaption>
+  <video style="width:100%" controls>
+    <source src="./videos/gym_carpole_ppo_ep_136.mp4" type="video/mp4">
+  </video>
+</figure>
 
 ## Future Experiments
 
