@@ -155,3 +155,4 @@ hidden/
 checkpoints/
 recordings/
 wandb/
+.DS_Store

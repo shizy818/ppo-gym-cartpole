@@ -22,9 +22,7 @@ The PPO Model currently only supports discrete action spaces (categorical distri
 
 <figure>
   <figcaption><h3>Episode 136 Video</h3></figcaption>
-  <video style="width:100%" controls>
-    <source src="./videos/gym_carpole_ppo_ep_136.mp4" type="video/mp4">
-  </video>
+  <a href='https://wandb.ai/arth-shukla/PPO%20Gym%20Cart%20Pole'><img src='./videos/gym_carpole_ppo_ep_136.gif'></a>
 </figure>
 
 ## Future Experiments
