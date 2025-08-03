@@ -5,7 +5,16 @@ import numpy as np
 
 import os
 
-class PPOExperience():
+# 演员-评论家算法(Actor-Critic): 策略(Policy Based)和基于价值(Value Based)相结合的方法。
+# 在这个实现中，使用了 PPO（Proximal Policy Optimization）作为具体的 Actor-Critic 算法
+
+# CartPole游戏中，状态State是一个一维数组，input_dims=(4,)，分别代表：cart position（小车位置），cart velocity（小车速度），pole angle（杆子角度），pole angular velocity（杆子角速度）。
+# 动作Action是一个离散型的动作空间，总共有2个动作可选，0和1分别代表左和右。
+
+
+# Batch Actor-Critic算法。用当前的策略和环境交互后，记录一批数据（20次），然后进行学习训练
+# memory可以存储最大批量值mem_max=100，但是gym_cartpole.py中每次learn之后都调用了clear_memory，所有训练数据批次一直是20
+class PPOExperience:
     def __init__(self, batch_size: int, mem_max: int = 100):
         self.states = []
         self.actions = []
@@ -19,14 +28,15 @@ class PPOExperience():
         self.mem_max = mem_max
         self.newest_mem_idx = -1
 
+    # 通过shuffle对memory中记录的（S,A,P,V,R)分批
     def gen_batches(self):
-        
+
         mem_len = len(self.states)
 
         # get all possible starting indices of batch size
         # e.g. memlen 20, batch_size 5 => [0, 5, 10, 15]
         batch_starts = np.arange(0, mem_len, self.batch_size)
-        
+
         # shuffle indices so that we get random memories in each batch
         idxs = np.arange(mem_len, dtype=np.int64)
         np.random.shuffle(idxs)
@@ -35,10 +45,17 @@ class PPOExperience():
         batch_idxs = [idxs[start : start + self.batch_size] for start in batch_starts]
 
         # return batch indices since we'll iterate over these in usage
-        return  np.array(self.states), np.array(self.actions), np.array(self.probs), \
-                np.array(self.vals), np.array(self.rewards), np.array(self.dones), \
-                batch_idxs
-    
+        return (
+            np.array(self.states),
+            np.array(self.actions),
+            np.array(self.probs),
+            np.array(self.vals),
+            np.array(self.rewards),
+            np.array(self.dones),
+            batch_idxs,
+        )
+
+    # 记录State, Action, State Transition, Value, Reward
     def store_memory(self, state, action, prob, val, reward, done):
 
         mem_len = len(self.states)
@@ -46,9 +63,9 @@ class PPOExperience():
         # cycle through array, replacing older memories as we go
         self.newest_mem_idx += 1
         self.newest_mem_idx %= self.mem_max
-        
+
         # want to cap memory since too short or too long memory is bad
-        if mem_len > self.mem_max:
+        if mem_len >= self.mem_max:
 
             # place items in place of oldest memory currently stored
             self.states[self.newest_mem_idx] = state
@@ -78,17 +95,28 @@ class PPOExperience():
         self.dones = []
 
 
+# Actor学习策略函数 π(s) → a，决定在给定状态下应该采取什么动作
+# 输入层：状态(State)
+# 结构：全连接（256神经元）-> Relu -> 全连接（256神经元）-> Relu -> Softmax
+# 输出：每个动作的概率
 class PPOActor(nn.Module):
-    def __init__(self, num_actions, input_dims, lr, fc_dims=(256, 256), checkpoint_dir='checkpoints/ppo', device='cpu'):
+    def __init__(
+        self,
+        num_actions,
+        input_dims,
+        lr,
+        fc_dims=(256, 256),
+        checkpoint_dir="checkpoints/ppo",
+        device="cpu",
+    ):
         super(PPOActor, self).__init__()
 
         # send to device (easier to handle at top level)
-        self.device=device
+        self.device = device
         self.to(device)
 
         # save checkpoints in case smth happens or I wanna try again with a baseline
-        self.checkpoint_file = os.path.join(checkpoint_dir, 'ppo_actor')
-
+        self.checkpoint_file = os.path.join(checkpoint_dir, "ppo_actor")
 
         # ------------------------------------------------------
         # define layers
@@ -105,7 +133,7 @@ class PPOActor(nn.Module):
         self.out = nn.Linear(fc_dims[1], num_actions)
         self.softmax = nn.Softmax(dim=-1)
 
-        # want to sample from categorical distr based on the 
+        # want to sample from categorical distr based on the
         # above learned outputs
         # categorical called directly
 
@@ -114,7 +142,6 @@ class PPOActor(nn.Module):
         # keep optimizer internal since we're keeping the
         # actor and critic separate
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
-
 
     def forward(self, input):
 
@@ -127,28 +154,39 @@ class PPOActor(nn.Module):
         # output prob for each action
         x = self.softmax(self.out(x))
 
-        # create categorical distr to sample 
+        # create categorical distr to sample
         # from for our next action
         x = Categorical(x)
 
         return x
-    
+
     def save_checkpoint(self):
         torch.save(self.state_dict(), self.checkpoint_file)
 
     def load_checkpoint(self):
         self.load_state_dict(torch.load(self.checkpoint_file))
 
+
+# Critic学习价值函数 V(s)，评估当前状态的价值。价值函数分为状态价值函数（State-value Function）和动作价值函数（Action-value Function)，这里是实现的前者
+# 输入层：状态State
+# 结构：全连接（256神经元）-> Relu -> 全连接（256神经元）-> Relu -> 线性输出层
+# 输出：状态价值估计（标量值）
 class PPOCritic(nn.Module):
-    def __init__(self, input_dims, lr, fc_dims=(256, 256), checkpoint_dir='checkpoints/ppo', device='cpu'):
+    def __init__(
+        self,
+        input_dims,
+        lr,
+        fc_dims=(256, 256),
+        checkpoint_dir="checkpoints/ppo",
+        device="cpu",
+    ):
         super(PPOCritic, self).__init__()
 
         # send to device (easier to handle at top level)
         self.to(device)
 
         # save checkpoints in case smth happens or I wanna try again with a baseline
-        self.checkpoint_file = os.path.join(checkpoint_dir, 'ppo_checkpoint')
-        
+        self.checkpoint_file = os.path.join(checkpoint_dir, "ppo_checkpoint")
 
         # ------------------------------------------------------
         # define layers
@@ -166,11 +204,9 @@ class PPOCritic(nn.Module):
 
         # ------------------------------------------------------
 
-
         # keep optimizer internal since we're keeping the
         # actor and critic separate
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
-
 
     def forward(self, input):
 
@@ -185,7 +221,7 @@ class PPOCritic(nn.Module):
         x = self.out(x)
 
         return x
-    
+
     def save_checkpoint(self):
         torch.save(self.state_dict(), self.checkpoint_file)
 
@@ -193,17 +229,29 @@ class PPOCritic(nn.Module):
         self.load_state_dict(torch.load(self.checkpoint_file))
 
 
-class PPOAgent():
+class PPOAgent:
     # defaults to 'ideal' values from https://arxiv.org/pdf/1707.06347.pdf
-    def __init__(self, num_actions, input_dims, gamma=0.99, lr=0.003, smoothing_lambda=0.95, policy_clip=0.2, batch_size=64, horizon=2048, num_epochs=10, mem_max=100):
-        
+    def __init__(
+        self,
+        num_actions,
+        input_dims,
+        gamma=0.99,
+        lr=0.003,
+        smoothing_lambda=0.95,
+        policy_clip=0.2,
+        batch_size=64,
+        horizon=2048,
+        num_epochs=10,
+        mem_max=100,
+    ):
+
         # hyperparams
         self.gamma = gamma
         self.policy_clip = policy_clip
         self.num_epochs = num_epochs
         self.smoothing_lambda = smoothing_lambda
 
-        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         # create actor, critic, and memory
         self.actor: PPOActor = PPOActor(num_actions, input_dims, lr, device=self.device)
@@ -218,22 +266,25 @@ class PPOAgent():
         self.memory.clear_memory()
 
     def save_models(self, silent=False):
-        if not silent: print('Saving models...')
+        if not silent:
+            print("Saving models...")
         self.actor.save_checkpoint()
         self.critic.save_checkpoint()
 
     def load_models(self, silent=False):
-        if not silent: print('Loading models...')
+        if not silent:
+            print("Loading models...")
         self.actor.load_checkpoint()
         self.critic.load_checkpoint()
 
+    # 计算probs的时候，通过log_prob取对数，因此值为负数
     def choose_action(self, obs):
         state = torch.tensor(np.array(obs), dtype=torch.float32).to(self.device)
 
         # get action from actor
         categorical_dist = self.actor(state)
         action = categorical_dist.sample()
-        
+
         # get approx value from critic
         val = self.critic(state)
 
@@ -243,24 +294,36 @@ class PPOAgent():
         val = torch.squeeze(val).item()
 
         return action, probs, val
-    
+
     def learn(self):
         for _ in range(self.num_epochs):
-            state_mem, action_mem, probs_mem, vals_mem, rewards_mem, dones_mem, batch_idxs = self.memory.gen_batches()
+            (
+                state_mem,
+                action_mem,
+                probs_mem,
+                vals_mem,
+                rewards_mem,
+                dones_mem,
+                batch_idxs,
+            ) = self.memory.gen_batches()
 
             advantage = np.zeros(len(rewards_mem), dtype=np.float32)
             # calc A_t
-            for t in range(len(rewards_mem)-1):
+            for t in range(len(rewards_mem) - 1):
 
-                discount = 1    # (gamma * delta) ^ 0
+                discount = 1  # (gamma * delta) ^ 0
                 A_t = 0
 
                 # calc each A_k term
-                for k in range(t, len(rewards_mem)-1):
+                for k in range(t, len(rewards_mem) - 1):
 
                     # delta_k = r_k + gamma * V(s_k+1) - V(s_k)
-                    delta_k = rewards_mem[k] + self.gamma * vals_mem[k + 1] * (1 - int(dones_mem[k])) - vals_mem[k]
-                    
+                    delta_k = (
+                        rewards_mem[k]
+                        + self.gamma * vals_mem[k + 1] * (1 - int(dones_mem[k]))
+                        - vals_mem[k]
+                    )
+
                     # add to A_t
                     A_t += discount * delta_k
 
@@ -274,13 +337,18 @@ class PPOAgent():
             advantage = torch.tensor(advantage).to(self.device)
             vals = torch.tensor(vals_mem).to(self.device)
 
-
             for batch in batch_idxs:
 
                 # convert to tensors for processing
-                states = torch.tensor(state_mem[batch], dtype=torch.float32).to(self.device)
-                old_probs = torch.tensor(probs_mem[batch], dtype=torch.float32).to(self.device)
-                actions = torch.tensor(action_mem[batch], dtype=torch.float32).to(self.device)
+                states = torch.tensor(state_mem[batch], dtype=torch.float32).to(
+                    self.device
+                )
+                old_probs = torch.tensor(probs_mem[batch], dtype=torch.float32).to(
+                    self.device
+                )
+                actions = torch.tensor(action_mem[batch], dtype=torch.float32).to(
+                    self.device
+                )
 
                 # get actor and critic outputs
                 categorical_dist = self.actor(states)
@@ -294,10 +362,15 @@ class PPOAgent():
                 weighted_probs = advantage[batch] * prob_ratio
 
                 # clip per paper to avoid too big a change in underlying params
-                weighted_clipped_probs = torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip) * advantage[batch]
+                weighted_clipped_probs = (
+                    torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip)
+                    * advantage[batch]
+                )
 
                 # actor loss performed using gradient ascent
-                actor_loss = -1 * torch.min(weighted_probs, weighted_clipped_probs).mean()
+                actor_loss = (
+                    -1 * torch.min(weighted_probs, weighted_clipped_probs).mean()
+                )
 
                 # return = advantage + memory_critic_val
                 # critic loss = mse(return - network_critic_val)
