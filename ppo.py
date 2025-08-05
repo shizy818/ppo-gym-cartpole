@@ -240,7 +240,6 @@ class PPOAgent:
         smoothing_lambda=0.95,
         policy_clip=0.2,
         batch_size=64,
-        horizon=2048,
         num_epochs=10,
         mem_max=100,
     ):
