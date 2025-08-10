@@ -13,19 +13,21 @@ def train(
     batch_size=5,
     num_epochs=4,
     lr=0.0003,
+    gamma=0.99,
     num_episodes=300,
     learn_every=20,
-    print_every=20,
+    print_every=1,
     max_score=10000,
 ):
 
     # create agent (note this is done in train because it needs hyperparams)
     agent = PPOAgent(
         num_actions=env.action_space.n,
-        batch_size=batch_size,
+        state_dims=env.observation_space.shape,
+        gamma=gamma,
         lr=lr,
+        batch_size=batch_size,
         num_epochs=num_epochs,
-        input_dims=env.observation_space.shape,
     )
 
     # lists to log score and avg score hist during training
@@ -36,11 +38,11 @@ def train(
     num_steps = 0
 
     # init best score (used to see if model should be saved)
-    best_score = env.reward_range[0]
+    best_score = -float("inf")
 
     # episodes is the number of games to play, where each game ends
     # when the agent meets terminal conditions for the env
-    for i in range(num_episodes):
+    for episode in range(num_episodes):
         obs = env.reset()[0]
         done = False
         score = 0
@@ -49,7 +51,6 @@ def train(
         # steps then learns using that information
         # 通过当前策略（PPOActor）执行20次动作，然后开始学习
         while not done:
-
             # choose action (actor)
             action, prob, val = agent.choose_action(obs)
 
@@ -77,7 +78,7 @@ def train(
                 avg_score = np.mean(score_hist[-100:])
                 avg_score_hist.append(avg_score)
 
-                return agent, score_hist, avg_score_hist, i
+                return agent, score_hist, avg_score_hist, episode
 
         score_hist.append(score)
 
@@ -96,9 +97,9 @@ def train(
             best_score = avg_score
             agent.save_models(silent=True)
 
-        if i % print_every == 0 or i == num_episodes - 1:
+        if episode % print_every == 0 or episode == num_episodes - 1:
             print(
-                f"game: [{i+1}/{num_episodes}]\tscore:\t{score:.2f}\tavg_score: {avg_score:.2f}"
+                f"game: [{episode+1}/{num_episodes}]\tscore:\t{score:.2f}\tavg_score: {avg_score:.2f}"
             )
 
     return agent, score_hist, avg_score_hist, num_episodes
@@ -113,15 +114,11 @@ def run_example(env: Env, agent: PPOAgent, max_score=1000):
         # run loop where model gathers data for "learn_every"
         # steps then learns using that information
         while not done:
-
             # choose action (actor)
             action, prob, val = agent.choose_action(obs)
 
             # get results of action
             next_obs, reward, done, _, _ = env.step(action)
-
-            # save data to memory for experience learning
-            agent.remember(obs, action, prob, val, reward, done)
 
             # update obs and tracking vars
             obs = next_obs
@@ -141,11 +138,8 @@ if __name__ == "__main__":
 
     # record and run train loop
     train_env = RecordVideo(env, SAVE_LOC, name_prefix="ppo-cartpole-train")
-    train_env.reward_range = (-float("inf"), float("inf"))
 
-    trained_agent, score_hist, avg_score_hist, num_episodes = train(
-        train_env, print_every=1
-    )
+    trained_agent, score_hist, avg_score_hist, num_episodes = train(train_env)
     train_env.close()
 
     # load best model

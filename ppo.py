@@ -15,7 +15,7 @@ import os
 # Batch Actor-Critic算法。用当前的策略和环境交互后，记录一批数据（20次），然后进行学习训练
 # memory可以存储最大批量值mem_max=100，但是gym_cartpole.py中每次learn之后都调用了clear_memory，所有训练数据批次一直是20
 class PPOExperience:
-    def __init__(self, batch_size: int, mem_max: int = 100):
+    def __init__(self, batch_size: int, capacity):
         self.states = []
         self.actions = []
         self.probs = []
@@ -25,7 +25,7 @@ class PPOExperience:
 
         self.batch_size = batch_size
 
-        self.mem_max = mem_max
+        self.capacity = capacity
         self.newest_mem_idx = -1
 
     # 通过shuffle对memory中记录的（S,A,P,V,R)分批
@@ -62,10 +62,10 @@ class PPOExperience:
 
         # cycle through array, replacing older memories as we go
         self.newest_mem_idx += 1
-        self.newest_mem_idx %= self.mem_max
+        self.newest_mem_idx %= self.capacity
 
         # want to cap memory since too short or too long memory is bad
-        if mem_len >= self.mem_max:
+        if mem_len >= self.capacity:
 
             # place items in place of oldest memory currently stored
             self.states[self.newest_mem_idx] = state
@@ -75,7 +75,6 @@ class PPOExperience:
             self.rewards[self.newest_mem_idx] = reward
             self.dones[self.newest_mem_idx] = done
         else:
-
             # append memory to storage
             self.states.append(state)
             self.actions.append(action)
@@ -85,7 +84,6 @@ class PPOExperience:
             self.dones.append(done)
 
     def clear_memory(self):
-
         # reset each list
         self.states = []
         self.actions = []
@@ -102,8 +100,8 @@ class PPOExperience:
 class PPOActor(nn.Module):
     def __init__(
         self,
-        num_actions,
         input_dims,
+        output_dims,
         lr,
         fc_dims=(256, 256),
         checkpoint_dir="checkpoints/ppo",
@@ -130,7 +128,7 @@ class PPOActor(nn.Module):
         # call relu directly
 
         # final output layer
-        self.out = nn.Linear(fc_dims[1], num_actions)
+        self.out = nn.Linear(fc_dims[1], output_dims)
         self.softmax = nn.Softmax(dim=-1)
 
         # want to sample from categorical distr based on the
@@ -234,14 +232,14 @@ class PPOAgent:
     def __init__(
         self,
         num_actions,
-        input_dims,
-        gamma=0.99,
-        lr=0.003,
+        state_dims,
+        gamma,
+        lr,
+        batch_size,
+        num_epochs,
         smoothing_lambda=0.95,
         policy_clip=0.2,
-        batch_size=64,
-        num_epochs=10,
-        mem_max=100,
+        memory_capacity=100,
     ):
 
         # hyperparams
@@ -253,9 +251,9 @@ class PPOAgent:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         # create actor, critic, and memory
-        self.actor: PPOActor = PPOActor(num_actions, input_dims, lr, device=self.device)
-        self.critic: PPOCritic = PPOCritic(input_dims, lr, device=self.device)
-        self.memory = PPOExperience(batch_size, mem_max=mem_max)
+        self.actor: PPOActor = PPOActor(state_dims, num_actions, lr)
+        self.critic: PPOCritic = PPOCritic(state_dims, lr)
+        self.memory = PPOExperience(batch_size, capacity=memory_capacity)
 
     # boiler plate building on child functions
     def remember(self, state, action, probs, vals, reward, done):
