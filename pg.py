@@ -36,6 +36,7 @@ class PolicyGradient(nn.Module):
         self,
         input_dims,
         output_dims,
+        lr,
         checkpoint_dir="checkpoints/policy_gradient",
         device="cpu",
     ):
@@ -48,6 +49,8 @@ class PolicyGradient(nn.Module):
         self.layer2 = nn.Linear(128, output_dims)
         self.dropout = nn.Dropout(0.6)
         self.softmax = nn.Softmax(dim=-1)
+
+        self.optimizer = optim.Adam(self.parameters(), lr=lr)
 
     def forward(self, state):
         # state tensor
@@ -66,8 +69,7 @@ class PolicyGradient(nn.Module):
 
 class PolicyGradientAgent:
     def __init__(self, num_actions, state_dims, gamma, lr):
-        self.policy: PolicyGradient = PolicyGradient(state_dims, num_actions)
-        self.optimizer = optim.Adam(self.policy.parameters(), lr=lr)
+        self.policy: PolicyGradient = PolicyGradient(state_dims, num_actions, lr)
         self.gamma = gamma
 
         self.memory = ExperienceReplay(10000)
@@ -112,8 +114,8 @@ class PolicyGradientAgent:
         loss = torch.sum(
             torch.mul(probs, Variable(rewards).to(self.device)).mul(-1), -1
         )
-        self.optimizer.zero_grad()
+        self.policy.optimizer.zero_grad()
         loss.backward()
-        self.optimizer.step()
+        self.policy.optimizer.step()
 
         return loss.item()

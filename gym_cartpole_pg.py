@@ -3,11 +3,14 @@ from gymnasium import Env
 from gymnasium.wrappers import RecordVideo
 from pg import PolicyGradientAgent
 import numpy as np
+import torch
+import os
+from pathlib import Path
 
 
 def train(
     env: Env,
-    print_every,
+    print_every=1,
     num_episodes=300,
     lr=0.01,
     gamma=0.99,
@@ -91,6 +94,29 @@ def train(
     return agent, score_hist, avg_score_hist, num_episodes
 
 
+def run_example(env: Env, agent: PolicyGradientAgent, max_score=1000):
+    with torch.no_grad():
+        obs = env.reset()[0]
+        done = False
+        score = 0
+
+        while not done:
+
+            # choose action (actor)
+            action, prob = agent.choose_action(obs)
+
+            # get results of action
+            next_obs, reward, done, _, _ = env.step(action)
+
+            # update obs and tracking vars
+            obs = next_obs
+            score += reward
+
+            if score > max_score:
+                print(f"Agent was too powerful! Score exceeded {max_score}")
+                return
+
+
 if __name__ == "__main__":
 
     SAVE_LOC = "recordings/gym-cartpole-v1/pg"
@@ -101,29 +127,30 @@ if __name__ == "__main__":
     # record and run train loop
     train_env = RecordVideo(env, SAVE_LOC, name_prefix="policy-gradient-cartpole-train")
 
-    trained_agent, score_hist, avg_score_hist, num_episodes = train(
-        train_env, print_every=1
-    )
+    trained_agent, score_hist, avg_score_hist, num_episodes = train(train_env)
     train_env.close()
 
-    # # load best model
-    # print("load best model!!")
-    # trained_agent.load_models()
-    #
-    # # record and run test example
-    # test_env = RecordVideo(
-    #     env, SAVE_LOC, name_prefix="ppo-cartpole-test", episode_trigger=lambda x: x == 0
-    # )
-    # run_example(test_env, trained_agent)
-    # test_env.close()
+    # load best model
+    print("load best model!!")
+    trained_agent.load_models()
 
-    # vids = dict()
-    # test_file = None
-    # for file in os.listdir(SAVE_LOC):
-    #     file = Path(file)
-    #     if file.suffix == ".mp4":
-    #         if "test" in file.stem:
-    #             vids[num_episodes] = str(Path(SAVE_LOC) / file)
-    #         else:
-    #             episode_num = file.stem.split("-")[4]
-    #             vids[int(episode_num)] = str(Path(SAVE_LOC) / file)
+    # record and run test example
+    test_env = RecordVideo(
+        env,
+        SAVE_LOC,
+        name_prefix="policy-gradient-cartpole-test",
+        episode_trigger=lambda x: x == 0,
+    )
+    run_example(test_env, trained_agent)
+    test_env.close()
+
+    vids = dict()
+    test_file = None
+    for file in os.listdir(SAVE_LOC):
+        file = Path(file)
+        if file.suffix == ".mp4":
+            if "test" in file.stem:
+                vids[num_episodes] = str(Path(SAVE_LOC) / file)
+            else:
+                episode_num = file.stem.split("-")[5]
+                vids[int(episode_num)] = str(Path(SAVE_LOC) / file)
