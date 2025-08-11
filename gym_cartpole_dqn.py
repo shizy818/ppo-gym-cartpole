@@ -10,19 +10,25 @@ import os
 from pathlib import Path
 
 
+def env_step(env: Env, action):
+    state, reward, done, _, _ = env.step(action)
+    return torch.FloatTensor([state]), torch.FloatTensor([reward]), done
+
+
 def train(
     env: Env,
     num_episodes=300,
     batch_size=128,
-    lr=0.0025,
-    print_every=20,
+    lr=0.001,
+    print_every=1,
+    target_update=40,
     max_score=10000,
 ):
 
     # create agent (note this is done in train because it needs hyperparams)
     agent = DQNAgent(
         num_actions=env.action_space.n,
-        input_dims=env.observation_space.shape[0],
+        state_dims=env.observation_space.shape,
         batch_size=batch_size,
         lr=lr,
     )
@@ -35,45 +41,45 @@ def train(
     num_steps = 0
 
     # init best score (used to see if model should be saved)
-    best_score = env.reward_range[0]
+    best_score = -float("inf")
 
     # episodes is the number of games to play, where each game ends
     # when the agent meets terminal conditions for the env
     for episode in range(num_episodes):
         state = env.reset()[0]
+        obs = Variable(torch.from_numpy(state).float().unsqueeze(0))
         done = False
         score = 0
-        c_loss = 0
-        c_samples = 0
+        # c_loss = 0
+        # c_samples = 0
 
         # run loop where model gathers data for "learn_every"
         # steps then learns using that information
         while not done:
-            obs = Variable(torch.from_numpy(state).float().unsqueeze(0))
-
             # choose action (actor)
             action = agent.choose_action(obs)
-
             # get results of action
-            next_state, reward, done, _, _ = env.step(action)
+            next_obs, reward, done = env_step(env, action.item())
+
+            if done:
+                next_obs = None
 
             # save data to memory for experience learning
-            agent.memory.push(
-                torch.FloatTensor([state]),
-                torch.LongTensor([action]).view(1, 1),
-                torch.FloatTensor([next_state]),
-                torch.FloatTensor([reward]),
-            )
+            agent.memory.push(obs, action, next_obs, reward)
+            obs = next_obs
 
             # learn using "batch_size" many memories
-            loss = agent.learn()
+            agent.learn()
+            if num_steps % target_update == 0:
+                # agent.soft_update(tau=1e-3)
+                agent.learner.save_checkpoint()
+                agent.target.load_checkpoint()
 
             # update obs and tracking vars
-            state = next_state
-            score += reward
+            score += reward.detach().item()
             num_steps += 1
-            c_samples += batch_size
-            c_loss += loss
+            # c_samples += batch_size
+            # c_loss += loss
 
             if score > max_score:
                 print(f"Agent was too powerful! Score exceeded {max_score}")
@@ -106,9 +112,9 @@ def train(
             print(
                 f"game: [{episode+1}/{num_episodes}]\tscore:\t{score:.2f}\tavg_score: {avg_score:.2f}"
             )
-            print(
-                "Loss", c_loss if c_loss == 0 else c_loss.item() / c_samples, num_steps
-            )
+            # print(
+            #     "Loss", c_loss / c_samples, num_steps
+            # )
 
     return agent, score_hist, avg_score_hist, num_episodes
 
@@ -116,28 +122,19 @@ def train(
 def run_example(env: Env, agent: DQNAgent, max_score=1000):
     with torch.no_grad():
         state = env.reset()[0]
+        obs = Variable(torch.from_numpy(state).float().unsqueeze(0))
         done = False
         score = 0
 
         while not done:
-            obs = Variable(torch.from_numpy(state).float().unsqueeze(0))
-
             # choose action (actor)
             action = agent.choose_action(obs)
 
             # get results of action
-            next_state, reward, done, _, _ = env.step(action)
-
-            # save data to memory for experience learning
-            agent.memory.push(
-                obs,
-                action,
-                torch.FloatTensor([next_state]),
-                torch.FloatTensor([reward]),
-            )
+            next_state, reward, done, _, _ = env.step(action.item())
 
             # update obs and tracking vars
-            state = next_state
+            obs = torch.FloatTensor([next_state])
             score += reward
 
             if score > max_score:
@@ -154,11 +151,8 @@ if __name__ == "__main__":
 
     # record and run train loop
     train_env = RecordVideo(env, SAVE_LOC, name_prefix="dqn-cartpole-train")
-    train_env.reward_range = (-float("inf"), float("inf"))
 
-    trained_agent, score_hist, avg_score_hist, num_episodes = train(
-        train_env, print_every=1
-    )
+    trained_agent, score_hist, avg_score_hist, num_episodes = train(train_env)
     train_env.close()
 
     # load best model

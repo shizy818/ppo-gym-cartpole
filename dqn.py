@@ -4,7 +4,6 @@ from collections import namedtuple
 
 import torch
 from torch import nn, optim
-import os
 
 # 参考
 # https://github.com/SeeknnDestroy/DQN-CartPole/blob/master/dql-cartpole.ipynb
@@ -56,12 +55,12 @@ class DQN(nn.Module):
         self.to(device)
 
         # save checkpoints in case smth happens or I wanna try again with a baseline
-        self.checkpoint_file = os.path.join(checkpoint_dir, "dnq")
+        self.checkpoint_file = checkpoint_dir
 
         # ------------------------------------------------------
         # define layers
 
-        self.layer1 = nn.Linear(input_dims, 128)
+        self.layer1 = nn.Linear(*input_dims, 128)
         self.layer2 = nn.Linear(128, 64)
         self.layer3 = nn.Linear(64, output_dims)
         self.dropout = nn.Dropout(0.7)
@@ -85,14 +84,14 @@ class DQNAgent:
     def __init__(
         self,
         num_actions,
-        input_dims,
+        state_dims,
+        batch_size,
+        lr,
         gamma=0.99,
         eps_start=0.9,
         eps_end=0.1,
         eps_decay=200,
-        lr=0.003,
-        batch_size=64,
-        mem_max=10000,
+        memory_capacity=10000,
     ):
         # hyperparams
         self.gamma = gamma
@@ -101,9 +100,13 @@ class DQNAgent:
         self.num_actions = num_actions
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-        self.memory = ExperienceReplay(mem_max)
-        self.learner = DQN(input_dims, num_actions)
-        self.target = DQN(input_dims, num_actions)
+        self.memory = ExperienceReplay(memory_capacity)
+        dqn = DQN(state_dims, num_actions)
+        self.learner = dqn
+        self.target = dqn
+        self.target.load_state_dict(self.learner.state_dict())
+        self.target.eval()
+
         self.optimizer = optim.Adam(self.learner.parameters(), lr=lr)
         self.loss = nn.MSELoss()
 
@@ -116,13 +119,11 @@ class DQNAgent:
         if not silent:
             print("Saving models...")
         self.learner.save_checkpoint()
-        self.target.save_checkpoint()
 
     def load_models(self, silent=False):
         if not silent:
             print("Loading models...")
         self.learner.load_checkpoint()
-        self.target.load_checkpoint()
 
     # epsilon-greedy策略: 在强化学习中，智能体在选动作时以epsilon概率随机探索，以1-epsilon概率选择当前 Q 网络最优动作。
     # 早期（训练刚开始）要多探索新环境，后期更信赖学到的策略
@@ -135,13 +136,17 @@ class DQNAgent:
         eps_thresh = self.eps_end + (self.eps_start - self.eps_end) * math.exp(
             -1 * self.steps / self.eps_decay
         )
+        # eps_thresh = max(self.eps_end, self.eps_start * (self.eps_decay_rate ** self.steps))
+
         if sample > eps_thresh:
             with torch.no_grad():
                 # select the optimal action based on the maximum expected return
-                action = torch.argmax(self.learner(obs)).item()
+                action = torch.argmax(self.learner(obs)).view(1, 1)
                 return action
         else:
-            return random.randrange(self.num_actions)
+            return torch.tensor(
+                [[random.randrange(self.num_actions)]], dtype=torch.long
+            )
 
     def learn(self):
         if len(self.memory) < self.batch_size:
@@ -166,26 +171,25 @@ class DQNAgent:
 
         next_state_values = torch.zeros(self.batch_size, device=self.device)
         # get the max along each row using the target network, then detach
-        next_state_values[has_next_state] = self.target(next_states).detach().max(1)[0]
+        next_state_values[has_next_state] = self.target(next_states).max(1)[0].detach()
 
         # Q(s, a) = reward(s, a) + Q(s_t+1, a_t+1) * gamma
-        q_target = next_state_values.unsqueeze(1) * self.gamma + reward_batch
+        q_target = next_state_values * self.gamma + reward_batch
 
-        loss = self.loss(q_expected, q_target)
+        loss = self.loss(q_expected, q_target.unsqueeze(1))
 
         self.optimizer.zero_grad()
         loss.backward()
         for param in self.learner.parameters():
             param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
-        self.soft_update(1e-3)
 
-        return loss
+        return loss.item()
 
     def soft_update(self, tau):
         for target_param, learner_param in zip(
             self.target.parameters(), self.learner.parameters()
         ):
             target_param.data.copy_(
-                tau * learner_param.data + (1.0 - tau) * target_param.data
+                tau * target_param.data + (1.0 - tau) * learner_param.data
             )
